@@ -52,8 +52,6 @@ def read_dataset(
     conditioning = np.array(conditioning[conditioning_parameters].values)
 
     # Standardize per-feature (over datasets and particles)
-    # TODO: This needs to take into account the mask
-    # Will required re-training the existing models
     if norm_dict is None:
         mask_bool = mask.astype(bool)
         x_mean = x.mean(axis=(0, 1), where=mask_bool[..., None])
