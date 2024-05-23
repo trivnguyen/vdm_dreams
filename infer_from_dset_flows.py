@@ -54,7 +54,7 @@ def infer(config: ConfigDict):
         config.data.dataset_name,
         config.data.n_features,
         config.data.n_particles,
-        config.data.flows_conditioning_parameters + config.data.flows_labels,
+        config.data.flows_labels + config.data.flows_conditioning_parameters,
     )
     x = x * norm_dict['std'] + norm_dict['mean']
 
@@ -124,10 +124,10 @@ def infer(config: ConfigDict):
 
         # generate the flow samples
         flows_samples_batch = sample_from_flow(
-            flows_cond_batch[:, :num_flows_conditioning], 1,
+            flows_cond_batch[:, num_flows_labels:], 1,
             jax.random.split(rng, num_batch))[:, 0]
-        flows_labels_std = flows_norm_dict['cond_std'][num_flows_conditioning:]
-        flows_labels_mean = flows_norm_dict['cond_mean'][num_flows_conditioning:]
+        flows_labels_std = flows_norm_dict['cond_std'][:num_flows_labels]
+        flows_labels_mean = flows_norm_dict['cond_mean'][:num_flows_labels]
         flows_samples_batch = flows_samples_batch * flows_labels_std + flows_labels_mean
 
         # get the total number of particles
@@ -150,8 +150,8 @@ def infer(config: ConfigDict):
             rng=rng,
             n_samples=num_batch,
             n_particles=config.data.n_particles,
-            conditioning=truth_cond_batch,
-            mask=truth_mask_batch,
+            conditioning=vdm_cond_batch,
+            mask=vdm_mask_batch,
             position_encoding=None,
             steps=config.steps,
             norm_dict=norm_dict,
@@ -170,7 +170,7 @@ def infer(config: ConfigDict):
         vdm_mask.append(vdm_mask_batch)
         vdm_cond.append(vdm_cond_batch)
 
-        truth_flows_samples.append(flows_cond_batch[:, num_flows_conditioning:])
+        truth_flows_samples.append(flows_cond_batch[:, :num_flows_labels])
         flows_samples.append(flows_samples_batch)
         flows_cond.append(flows_cond_batch)
 

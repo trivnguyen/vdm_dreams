@@ -88,7 +88,7 @@ def train_flows(
         logdir=workdir, just_logging=jax.process_index() != 0
     )
     # Load the dataset
-    conditioning_parameters = config.data.flows_conditioning_parameters + config.data.flows_labels
+    conditioning_parameters = config.data.flows_labels + config.data.flows_conditioning_parameters
     n_condition = len(config.data.flows_conditioning_parameters)
     n_labels = len(config.data.flows_labels)
     train_ds, norm_dict = datasets.read_dataloader(
@@ -115,8 +115,8 @@ def train_flows(
     # TODO: Make so we don't have to pass an entire batch (slow)
     rng, rng_params = jax.random.split(rng)
     _, conditioning_batch, _, _ = next(batches)
-    x_batch = conditioning_batch[..., :n_condition]
-    theta_batch = conditioning_batch[..., n_condition:]
+    theta_batch = conditioning_batch[..., :n_labels]
+    x_batch = conditioning_batch[..., n_labels:]
     params = model.init(rng, theta_batch[0], x_batch[0])
 
     logging.info("Instantiated the model")
@@ -169,8 +169,8 @@ def train_flows(
     with trange(config.flow_training.n_train_steps) as steps:
         for step in steps:
             _, conditioning_batch, _, _ = next(batches)
-            x_batch = conditioning_batch[..., :n_condition]
-            theta_batch = conditioning_batch[..., n_condition:]
+            theta_batch = conditioning_batch[..., :n_labels]
+            x_batch = conditioning_batch[..., n_labels:]
             batch = (theta_batch[0], x_batch[0])
             state, metrics = train_step(state, batch)
 
