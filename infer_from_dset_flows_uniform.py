@@ -42,7 +42,7 @@ def infer(config: ConfigDict):
 
     # load the dataset
     logging.info("Loading the dataset...")
-    x, conditioning, mask, _, norm_dict = datasets.read_dataset(
+    _, _, _, _, norm_dict = datasets.read_dataset(
         config.data.dataset_root,
         config.data.dataset_name,
         config.data.n_features,
@@ -56,22 +56,12 @@ def infer(config: ConfigDict):
         config.data.n_particles,
         config.data.flows_labels + config.data.flows_conditioning_parameters,
     )
-    x = x * norm_dict['std'] + norm_dict['mean']
-
     num_flows_conditioning = len(config.data.flows_conditioning_parameters)
     num_flows_labels = len(config.data.flows_labels)
 
-    # find where the index of log_num_subhalos or num_subhalos is in the labels
-    log_num_subhalos_idx = config.data.flows_labels.index('log_num_subhalos')
-
-    # check if the conditioning parameters include any flow labels
-    # if so, get the index of the flow label in the conditioning parameters
-    flows_to_condition = []
-    condition_to_flows = []
-    for i, label in enumerate(config.data.flows_labels):
-        if label in config.data.conditioning_parameters:
-            condition_to_flows.append(config.data.conditioning_parameters.index(label))
-            flows_to_condition.append(i)
+    # split the flows conditioning into the conditioning and labels
+    flows_labels = flows_conditioning[:, :num_flows_labels]
+    flows_conditioning = flows_conditioning[:, num_flows_labels:]
 
     # load the VDM and the normalizing flows
     logging.info("Loading the VDM and the normalizing flows...")
@@ -97,52 +87,45 @@ def infer(config: ConfigDict):
         x_samples = nn.apply(sample_fn, flows)(flows_params)
         return x_samples
 
+    # First, use the flows to generate VDM conditioning samples
+    logging.info("Generating VDM conditioning samples...")
+    flows_conditioning_samples = jax.random.uniform(
+        rng, shape=(config.n_samples, num_flows_conditioning),
+        minval=jnp.min(flows_conditioning, axis=0),
+        maxval=jnp.max(flows_conditioning, axis=0)
+    )
+    flows_labels_samples = sample_from_flow(
+        flows_conditioning_samples, 1, jax.random.split(rng, config.n_samples))
+    flows_labels_samples = flows_labels_samples.reshape(-1, flows_labels.shape[1])
+
+    # create the conditioning samples for the VDM
+    conditioning = jnp.concatenate(
+        [flows_labels_samples, flows_conditioning_samples], axis=1)
+    conditioning = conditioning * flows_norm_dict['cond_std'] + flows_norm_dict['cond_mean']
+
     # Iterate over the entire dataset and start generation
     dset = datasets.make_dataloader(
-        (x, conditioning, flows_conditioning, mask), batch_size=config.batch_size,
+        (conditioning, ), batch_size=config.batch_size,
         seed=config.seed, shuffle=False, repeat=False)
     dset = create_input_iter(dset)
 
-    truth_samples = []
-    truth_cond = []
-    truth_mask = []
     vdm_samples = []
     vdm_cond = []
     vdm_mask = []
-    truth_flows_samples = []
-    flows_samples = []
-    flows_cond = []
 
     for batch in tqdm(dset):
-        x_batch, cond_batch, flows_cond_batch, mask_batch = batch
-        x_batch = jnp.repeat(x_batch[0], config.n_repeats, axis=0)
-        truth_cond_batch = jnp.repeat(cond_batch[0], config.n_repeats, axis=0)
-        vdm_cond_batch = truth_cond_batch.copy()
-        flows_cond_batch = jnp.repeat(flows_cond_batch[0], config.n_repeats, axis=0)
-        truth_mask_batch = jnp.repeat(mask_batch[0], config.n_repeats, axis=0)
-        num_batch = len(flows_cond_batch)
+        cond_batch = batch[0][0]
+        num_batch = len(cond_batch)
 
-        # generate the flow samples
-        flows_samples_batch = sample_from_flow(
-            flows_cond_batch[:, num_flows_labels:], 1,
-            jax.random.split(rng, num_batch))[:, 0]
-        flows_labels_std = flows_norm_dict['cond_std'][:num_flows_labels]
-        flows_labels_mean = flows_norm_dict['cond_mean'][:num_flows_labels]
-        flows_samples_batch = flows_samples_batch * flows_labels_std + flows_labels_mean
+        log_num_subhalos = cond_batch[:, num_flows_labels-1]
+        # cond_batch = jnp.delete(cond_batch, num_flows_labels-1, axis=1)
+        cond_batch = (cond_batch - norm_dict['cond_mean']) / norm_dict['cond_std']
 
         # get the total number of particles
-        num_subhalos = 10**flows_samples_batch[..., log_num_subhalos_idx]
+        num_subhalos = 10**log_num_subhalos
         num_subhalos = jnp.clip(num_subhalos, 1, config.data.n_particles)
         num_subhalos = jnp.round(num_subhalos).astype(jnp.int32)
-        vdm_mask_batch = create_mask(num_subhalos, config.data.n_particles)
-
-        # get the new conditioning vector
-        if len(flows_to_condition) > 0:
-            # make sure that the normalization is working correctly
-            vdm_cond_batch = vdm_cond_batch * norm_dict['cond_std'] + norm_dict['cond_mean']
-            vdm_cond_batch = vdm_cond_batch.at[:, condition_to_flows].set(
-                flows_samples_batch[:, flows_to_condition])
-            vdm_cond_batch = (vdm_cond_batch - norm_dict['cond_mean']) / norm_dict['cond_std']
+        mask_batch = create_mask(num_subhalos, config.data.n_particles)
 
         vdm_samples_batch = models.eval_utils.generate_samples(
             vdm=vdm,
@@ -150,45 +133,30 @@ def infer(config: ConfigDict):
             rng=rng,
             n_samples=num_batch,
             n_particles=config.data.n_particles,
-            conditioning=vdm_cond_batch,
-            mask=vdm_mask_batch,
+            conditioning=cond_batch,
+            mask=mask_batch,
             position_encoding=None,
             steps=config.steps,
             norm_dict=norm_dict,
         )
 
         # denormalize the conditioning vector
-        truth_cond_batch = truth_cond_batch * norm_dict['cond_std'] + norm_dict['cond_mean']
-        vdm_cond_batch = vdm_cond_batch * norm_dict['cond_std'] + norm_dict['cond_mean']
-        flows_cond_batch = flows_cond_batch * flows_norm_dict['cond_std'] + flows_norm_dict['cond_mean']
+        cond_batch = cond_batch * norm_dict['cond_std'] + norm_dict['cond_mean']
 
         # store data
-        truth_samples.append(x_batch)
-        truth_cond.append(truth_cond_batch)
-        truth_mask.append(truth_mask_batch)
         vdm_samples.append(vdm_samples_batch)
-        vdm_mask.append(vdm_mask_batch)
-        vdm_cond.append(vdm_cond_batch)
+        vdm_mask.append(mask_batch)
+        vdm_cond.append(cond_batch)
 
-        truth_flows_samples.append(flows_cond_batch[:, :num_flows_labels])
-        flows_samples.append(flows_samples_batch)
-        flows_cond.append(flows_cond_batch)
-
-    truth_samples = jnp.concatenate(truth_samples, axis=0)
-    truth_mask = jnp.concatenate(truth_mask, axis=0)
-    truth_cond = jnp.concatenate(truth_cond, axis=0)
     vdm_samples = jnp.concatenate(vdm_samples, axis=0)
     vdm_mask = jnp.concatenate(vdm_mask, axis=0)
     vdm_cond = jnp.concatenate(vdm_cond, axis=0)
-    truth_flows_samples = jnp.concatenate(truth_flows_samples, axis=0)
-    flows_samples = jnp.concatenate(flows_samples, axis=0)
-    flows_cond = jnp.concatenate(flows_cond, axis=0)
 
     # Save the samples
     if config.output_name is None:
         vdm_base = os.path.basename(config.vdm_name)
         flows_base = os.path.basename(config.flows_name)
-        output_name = f'vdm-flows/{vdm_base}_{flows_base}.npz'
+        output_name = f'vdm-flows-uniform/{vdm_base}_{flows_base}.npz'
     else:
         output_name = config.output_name
     output_path = os.path.join(config.outdir, output_name)
@@ -196,8 +164,8 @@ def infer(config: ConfigDict):
     logging.info("Saving the generated samples to %s", output_path)
     np.savez(
         output_path, samples=vdm_samples, cond=vdm_cond, mask=vdm_mask,
-        truth=truth_samples, truth_cond=truth_cond, truth_mask=truth_mask,
-        truth_flows_samples=truth_flows_samples, flows_samples=flows_samples, flows_cond=flows_cond
+        flow_samples=conditioning[:, :num_flows_labels],
+        flow_cond=conditioning[:, num_flows_labels:],
     )
 
 if __name__ == "__main__":

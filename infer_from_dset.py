@@ -7,18 +7,18 @@ from pathlib import Path
 from typing import Dict, List
 
 import datasets
-import eval
 import flax
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
-import tensorflow as tf
 import models.diffusion
+import models.eval_utils
 import numpy as np
+import tensorflow as tf
 import yaml
 from absl import flags, logging
-from ml_collections.config_dict import ConfigDict
 from ml_collections import config_flags
+from ml_collections.config_dict import ConfigDict
 from models.diffusion_utils import generate
 from models.flows import maf, nsf
 from models.train_utils import create_input_iter
@@ -72,7 +72,7 @@ def infer(config: ConfigDict):
         truth_mask_batch = jnp.repeat(mask_batch[0], config.n_repeats, axis=0)
         num_batch = len(truth_cond_batch)
 
-        vdm_samples_batch = eval.generate_samples(
+        vdm_samples_batch = models.eval_utils.generate_samples(
                 vdm=vdm,
                 params=vdm_params,
                 rng=rng,
