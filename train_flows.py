@@ -41,6 +41,8 @@ def build_flows(config):
             n_bins=config.flows.n_bins,
             range_min=config.flows.range_min,
             range_max=config.flows.range_max,
+            batch_norm=config.flows.batch_norm,
+            dropout_rate=config.flows.dropout_rate,
         )
     elif config.flows.flows == "maf":
         model = maf.MaskedAutoregressiveFlow(
@@ -96,7 +98,7 @@ def train_flows(
         config.data.dataset_name,
         config.data.n_features,
         config.data.n_particles,
-        config.training.batch_size,
+        config.flow_training.batch_size,
         seed=config.seed,
         shuffle=True,
         repeat=True,

@@ -24,18 +24,19 @@ class TransformedConditional(Transformed):
 
     def sample(self, seed: PRNGKey, sample_shape: List[int], context: Optional[Array] = None) -> Array:
         x = self.distribution.sample(seed=seed, sample_shape=sample_shape)
-        y, _ = self.bijector.forward_and_log_det(x, context)
+        y, _ = self.bijector.forward_and_log_det(x, context, training=False)
         return y
 
-    def log_prob(self, x: Array, context: Optional[Array] = None) -> Array:
-        x, ildj_y = self.bijector.inverse_and_log_det(x, context)
+    def log_prob(self, x: Array, context: Optional[Array] = None, training: bool = True) -> Array:
+        x, ildj_y = self.bijector.inverse_and_log_det(x, context, training=training)
         lp_x = self.distribution.log_prob(x)
         lp_y = lp_x + ildj_y
         return lp_y
 
-    def sample_and_log_prob(self, seed: PRNGKey, sample_shape: List[int], context: Optional[Array] = None) -> Tuple[Array, Array]:
+    def sample_and_log_prob(
+        self, seed: PRNGKey, sample_shape: List[int], context: Optional[Array] = None) -> Tuple[Array, Array]:
         x, lp_x = self.distribution.sample_and_log_prob(seed=seed, sample_shape=sample_shape)
-        y, fldj = jax.vmap(self.bijector.forward_and_log_det)(x, context)
+        y, fldj = jax.vmap(self.bijector.forward_and_log_det)(x, context, training=False)
         lp_y = jax.vmap(jnp.subtract)(lp_x, fldj)
         return y, lp_y
 
@@ -44,44 +45,50 @@ class InverseConditional(Inverse):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def forward(self, x: Array, context: Optional[Array] = None) -> Array:
-        return self._bijector.inverse(x, context)
+    def forward(
+        self, x: Array, context: Optional[Array] = None, training: bool = True) -> Array:
+        return self._bijector.inverse(x, context, training=training)
 
-    def inverse(self, y: Array, context: Optional[Array] = None) -> Array:
-        return self._bijector.forward(y, context)
+    def inverse(
+        self, y: Array, context: Optional[Array] = None, training: bool = True) -> Array:
+        return self._bijector.forward(y, context, training=training)
 
-    def forward_and_log_det(self, x: Array, context: Optional[Array] = None) -> Tuple[Array, Array]:
-        return self._bijector.inverse_and_log_det(x, context)
+    def forward_and_log_det(
+        self, x: Array, context: Optional[Array] = None, training: bool = True) -> Tuple[Array, Array]:
+        return self._bijector.inverse_and_log_det(x, context, training=training)
 
-    def inverse_and_log_det(self, y: Array, context: Optional[Array] = None) -> Tuple[Array, Array]:
-        return self._bijector.forward_and_log_det(y, context)
+    def inverse_and_log_det(
+        self, y: Array, context: Optional[Array] = None, training: bool = True) -> Tuple[Array, Array]:
+        return self._bijector.forward_and_log_det(y, context, training=training)
 
 
 class ChainConditional(Chain):
     def __init__(self, *args):
         super().__init__(*args)
 
-    def forward(self, x: Array, context: Optional[Array] = None) -> Array:
+    def forward(self, x: Array, context: Optional[Array] = None, training: bool = True) -> Array:
         for bijector in reversed(self._bijectors):
-            x = bijector.forward(x, context)
+            x = bijector.forward(x, context, training=training)
         return x
 
-    def inverse(self, y: Array, context: Optional[Array] = None) -> Array:
+    def inverse(self, y: Array, context: Optional[Array] = None, training: bool = True) -> Array:
         for bijector in self._bijectors:
-            y = bijector.inverse(y, context)
+            y = bijector.inverse(y, context, training=training)
         return y
 
-    def forward_and_log_det(self, x: Array, context: Optional[Array] = None) -> Tuple[Array, Array]:
-        x, log_det = self._bijectors[-1].forward_and_log_det(x, context)
+    def forward_and_log_det(
+        self, x: Array, context: Optional[Array] = None, training: bool = True) -> Tuple[Array, Array]:
+        x, log_det = self._bijectors[-1].forward_and_log_det(x, context, training=training)
         for bijector in reversed(self._bijectors[:-1]):
-            x, ld = bijector.forward_and_log_det(x, context)
+            x, ld = bijector.forward_and_log_det(x, context, training=training)
             log_det += ld
         return x, log_det
 
-    def inverse_and_log_det(self, y: Array, context: Optional[Array] = None) -> Tuple[Array, Array]:
-        y, log_det = self._bijectors[0].inverse_and_log_det(y, context)
+    def inverse_and_log_det(
+        self, y: Array, context: Optional[Array] = None, training: bool = True) -> Tuple[Array, Array]:
+        y, log_det = self._bijectors[0].inverse_and_log_det(y, context, training=training)
         for bijector in self._bijectors[1:]:
-            y, ld = bijector.inverse_and_log_det(y, context)
+            y, ld = bijector.inverse_and_log_det(y, context, training=training)
             log_det += ld
         return y, log_det
 
@@ -115,19 +122,21 @@ class MaskedCouplingConditional(MaskedCoupling):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def forward_and_log_det(self, x: Array, context: Optional[Array] = None) -> Tuple[Array, Array]:
+    def forward_and_log_det(
+        self, x: Array, context: Optional[Array] = None, training: bool = True) -> Tuple[Array, Array]:
         self._check_forward_input_shape(x)
         masked_x = jnp.where(self._event_mask, x, 0.0)
-        params = self._conditioner(masked_x, context)
+        params = self._conditioner(masked_x, context, training=training)
         y0, log_d = self._inner_bijector(params).forward_and_log_det(x)
         y = jnp.where(self._event_mask, x, y0)
         logdet = math.sum_last(jnp.where(self._mask, 0.0, log_d), self._event_ndims - self._inner_event_ndims)
         return y, logdet
 
-    def inverse_and_log_det(self, y: Array, context: Optional[Array] = None) -> Tuple[Array, Array]:
+    def inverse_and_log_det(
+        self, y: Array, context: Optional[Array] = None, training: bool = True) -> Tuple[Array, Array]:
         self._check_inverse_input_shape(y)
         masked_y = jnp.where(self._event_mask, y, 0.0)
-        params = self._conditioner(masked_y, context)
+        params = self._conditioner(masked_y, context, training=training)
         x0, log_d = self._inner_bijector(params).inverse_and_log_det(y)
         x = jnp.where(self._event_mask, y, x0)
         logdet = math.sum_last(jnp.where(self._mask, 0.0, log_d), self._event_ndims - self._inner_event_ndims)
