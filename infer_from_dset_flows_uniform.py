@@ -67,11 +67,11 @@ def infer(config: ConfigDict):
     logging.info("Loading the VDM and the normalizing flows...")
     path_to_vdm = Path(os.path.join(config.workdir, config.vdm_name))
     vdm, vdm_params = models.diffusion.VariationalDiffusionModel.from_path_to_model(
-        path_to_model=path_to_vdm, norm_dict=norm_dict)
+        path_to_model=path_to_vdm, norm_dict=norm_dict, checkpoint_step=config.vdm_checkpoint_step)
 
     path_to_flows = Path(os.path.join(config.workdir, config.flows_name))
     flows, flows_params = nsf.NeuralSplineFlow.from_path_to_model(
-        path_to_model=path_to_flows)
+        path_to_model=path_to_flows, checkpoint_step=config.flows_checkpoint_step)
 
     # Create the sampling function based on the normalizing flows
     @partial(jax.vmap, in_axes=(0, None, 0))

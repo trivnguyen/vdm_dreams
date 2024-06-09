@@ -47,7 +47,7 @@ def infer(config: ConfigDict):
     logging.info("Loading the VDM")
     path_to_vdm = Path(os.path.join(config.workdir, config.vdm_name))
     vdm, vdm_params = models.diffusion.VariationalDiffusionModel.from_path_to_model(
-        path_to_model=path_to_vdm, norm_dict=norm_dict)
+        path_to_model=path_to_vdm, norm_dict=norm_dict, checkpoint_step=config.vdm_checkpoint_step)
 
     # Iterate over the entire dataset and start generation
     dset = datasets.make_dataloader(
@@ -73,17 +73,17 @@ def infer(config: ConfigDict):
         num_batch = len(truth_cond_batch)
 
         vdm_samples_batch = models.eval_utils.generate_samples(
-                vdm=vdm,
-                params=vdm_params,
-                rng=rng,
-                n_samples=num_batch,
-                n_particles=config.data.n_particles,
-                conditioning=truth_cond_batch,
-                mask=truth_mask_batch,
-                position_encoding=position_encoding,
-                steps=config.steps,
-                norm_dict=norm_dict,
-            )
+            vdm=vdm,
+            params=vdm_params,
+            rng=rng,
+            n_samples=num_batch,
+            n_particles=config.data.n_particles,
+            conditioning=truth_cond_batch,
+            mask=truth_mask_batch,
+            position_encoding=position_encoding,
+            steps=config.steps,
+            norm_dict=norm_dict,
+        )
 
         # denormalize the conditioning vector
         truth_cond_batch = truth_cond_batch * norm_dict['cond_std'] + norm_dict['cond_mean']
