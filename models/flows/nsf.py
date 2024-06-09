@@ -18,13 +18,12 @@ from .bijectors import InverseConditional, ChainConditional, TransformedConditio
 
 Array = Any
 
-
 class Conditioner(nn.Module):
     event_shape: List[int]
     context_shape: List[int]
     hidden_dims: List[int]
     num_bijector_params: int
-    activation: str = "tanh"
+    activation: str = "relu"
     dropout_rate: float = 0.0  # default dropout rate
     batch_norm: bool = False
 
