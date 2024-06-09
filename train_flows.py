@@ -134,7 +134,8 @@ def train_flows(
             init_value=0.0,
             peak_value=config.optim.learning_rate,
             warmup_steps=config.flow_training.warmup_steps,
-            decay_steps=config.flow_training.n_train_steps,
+            decay_steps=config.flow_training.decay_steps,
+            end_value=config.flow_training.end_value,
         )
     elif config.optim.lr_schedule == "constant":
         schedule = optax.constant_schedule(config.optim.learning_rate)
