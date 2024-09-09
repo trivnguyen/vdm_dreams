@@ -305,7 +305,6 @@ class VariationalDiffusionModel(nn.Module):
         eps_0 = jax.random.normal(self.make_rng("sample"), shape=f.shape)
         z_0 = variance_preserving_map(f, g_0, eps_0)
         z_0_rescaled = z_0 / alpha(g_0)
-        # z_0_rescaled = z_0
 
         # features reconstruction term
         loss_recon = -self.decode(z_0_rescaled, cond).log_prob(x)
